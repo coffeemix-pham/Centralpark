@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-// 청주시청 기준 좌표
-const CHEONGJU_LAT = 36.6372;
-const CHEONGJU_LON = 127.4897;
+// 오창읍 오창공원로 96 인근 좌표
+const OCHANG_LAT = 36.7210;
+const OCHANG_LON = 127.4330;
 
 export interface WeatherData {
   temperature: number;   // 정수 온도
@@ -55,7 +55,7 @@ export const fetchWeatherAndDust = async (): Promise<WeatherData> => {
   // Open-Meteo API - current에 relative_humidity_2m 추가, 온도 정수 처리
   const response = await axios.get(
     `https://api.open-meteo.com/v1/forecast` +
-    `?latitude=${CHEONGJU_LAT}&longitude=${CHEONGJU_LON}` +
+    `?latitude=${OCHANG_LAT}&longitude=${OCHANG_LON}` +
     `&current=temperature_2m,relative_humidity_2m,weather_code` +
     `&hourly=pm10,pm2_5` +
     `&timezone=Asia%2FSeoul`

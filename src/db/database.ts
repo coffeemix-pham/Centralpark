@@ -16,7 +16,15 @@ export interface Memo {
   studentId: string;
   memoText: string;
   lastUpdated: number; // Timestamp
-  isPendingSync: number; // 0 or 1
+}
+
+// 체크리스트 메타 정보 타입 정의
+export interface ChecklistMeta {
+  id: string;          // "date|classId|title"
+  date: string;
+  classId: string;
+  title: string;
+  items: string;       // JSON: ["식사","수면","투약"]
 }
 
 // 체크리스트 아이템 타입 정의
@@ -28,7 +36,6 @@ export interface ChecklistItem {
   studentId: string;
   itemName: string;
   isChecked: number; // 0 or 1
-  isPendingSync: number; // 0 or 1
 }
 
 let db: SQLite.SQLiteDatabase;
@@ -53,8 +60,14 @@ export const initDatabase = async () => {
     CREATE TABLE IF NOT EXISTS memos (
       studentId TEXT PRIMARY KEY NOT NULL,
       memoText TEXT,
-      lastUpdated INTEGER NOT NULL,
-      isPendingSync INTEGER DEFAULT 0
+      lastUpdated INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS checklist_meta (
+      id TEXT PRIMARY KEY NOT NULL,
+      date TEXT NOT NULL,
+      classId TEXT NOT NULL,
+      title TEXT NOT NULL,
+      items TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS checklists (
       id TEXT PRIMARY KEY NOT NULL,
@@ -63,19 +76,18 @@ export const initDatabase = async () => {
       title TEXT NOT NULL,
       studentId TEXT NOT NULL,
       itemName TEXT NOT NULL,
-      isChecked INTEGER DEFAULT 0,
-      isPendingSync INTEGER DEFAULT 0
+      isChecked INTEGER DEFAULT 0
     );
   `);
-  
+
   return db;
 };
 
 export const getDb = () => db;
 
-// DAO 시뮬레이션 함수들
+// DAO 함수들
 export const dbOperations = {
-  // 원아 관련
+  // ─── 원아 관련 ───
   getStudentsByClass: async (classId: string): Promise<Student[]> => {
     return await db.getAllAsync<Student>(
       'SELECT * FROM students WHERE classId = ? AND status = "재원"',
@@ -83,7 +95,7 @@ export const dbOperations = {
     );
   },
 
-  // 메모 관련
+  // ─── 메모 관련 ───
   getMemo: async (studentId: string): Promise<Memo | null> => {
     return await db.getFirstAsync<Memo>(
       'SELECT * FROM memos WHERE studentId = ?',
@@ -94,17 +106,65 @@ export const dbOperations = {
   saveMemo: async (studentId: string, memoText: string) => {
     const now = Date.now();
     await db.runAsync(
-      'INSERT OR REPLACE INTO memos (studentId, memoText, lastUpdated, isPendingSync) VALUES (?, ?, ?, ?)',
-      [studentId, memoText, now, 1]
+      'INSERT OR REPLACE INTO memos (studentId, memoText, lastUpdated) VALUES (?, ?, ?)',
+      [studentId, memoText, now]
     );
   },
 
-  // 동기화 관련
-  getUnsyncedMemos: async (): Promise<Memo[]> => {
-    return await db.getAllAsync<Memo>('SELECT * FROM memos WHERE isPendingSync = 1');
+  getAllMemos: async (): Promise<Memo[]> => {
+    return await db.getAllAsync<Memo>('SELECT * FROM memos WHERE memoText IS NOT NULL AND memoText != ""');
   },
 
-  markMemoAsSynced: async (studentId: string) => {
-    await db.runAsync('UPDATE memos SET isPendingSync = 0 WHERE studentId = ?', [studentId]);
-  }
+  // ─── 체크리스트 관련 ───
+  createChecklist: async (date: string, classId: string, title: string, items: string[]) => {
+    const id = `${date}|${classId}|${title}`;
+    await db.runAsync(
+      'INSERT OR REPLACE INTO checklist_meta (id, date, classId, title, items) VALUES (?, ?, ?, ?, ?)',
+      [id, date, classId, title, JSON.stringify(items)]
+    );
+  },
+
+  getChecklistsByClass: async (classId: string): Promise<ChecklistMeta[]> => {
+    return await db.getAllAsync<ChecklistMeta>(
+      'SELECT * FROM checklist_meta WHERE classId = ? ORDER BY date DESC',
+      [classId]
+    );
+  },
+
+  getAllChecklists: async (): Promise<ChecklistMeta[]> => {
+    return await db.getAllAsync<ChecklistMeta>(
+      'SELECT * FROM checklist_meta ORDER BY date DESC'
+    );
+  },
+
+  saveChecklistItem: async (
+    date: string, classId: string, title: string,
+    studentId: string, itemName: string, isChecked: boolean
+  ) => {
+    const id = `${date}|${classId}|${title}|${studentId}|${itemName}`;
+    await db.runAsync(
+      'INSERT OR REPLACE INTO checklists (id, date, classId, title, studentId, itemName, isChecked) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [id, date, classId, title, studentId, itemName, isChecked ? 1 : 0]
+    );
+  },
+
+  getChecklistItems: async (date: string, classId: string, title: string): Promise<ChecklistItem[]> => {
+    return await db.getAllAsync<ChecklistItem>(
+      'SELECT * FROM checklists WHERE date = ? AND classId = ? AND title = ?',
+      [date, classId, title]
+    );
+  },
+
+  getAllChecklistItems: async (): Promise<ChecklistItem[]> => {
+    return await db.getAllAsync<ChecklistItem>('SELECT * FROM checklists');
+  },
+
+  hideChecklist: async (date: string, classId: string, title: string) => {
+    const metaId = `${date}|${classId}|${title}`;
+    await db.runAsync('DELETE FROM checklist_meta WHERE id = ?', [metaId]);
+    await db.runAsync(
+      'DELETE FROM checklists WHERE date = ? AND classId = ? AND title = ?',
+      [date, classId, title]
+    );
+  },
 };

@@ -5,11 +5,9 @@ import {
   TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import {
-  fetchStudentsFromGAS, fetchChecklistsFromGAS,
-  saveChecklistToGAS, hideChecklistFromGAS,
-} from '../../src/api/gasApi';
+import { fetchStudentsFromGAS } from '../../src/api/gasApi';
 import { loadTeacherProfile } from '../../src/store/teacherStore';
+import { dbOperations } from '../../src/db/database';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
 
 interface Student { id: string; name: string; classId: string; gender?: string; }
@@ -45,29 +43,47 @@ export default function ChecklistScreen() {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [studentsRes, checklistsRes, profile] = await Promise.all([
-        fetchStudentsFromGAS(), fetchChecklistsFromGAS(), loadTeacherProfile()
+      const [studentsRes, profile] = await Promise.all([
+        fetchStudentsFromGAS(), loadTeacherProfile()
       ]);
       setStudentData(studentsRes?.students || {});
       const cls: ClassInfo[] = studentsRes?.classes || [];
       setClasses(cls);
 
       // 담당반 자동 설정
+      let myClassId = '';
       if (profile.classId !== 'ALL') {
+        myClassId = profile.classId;
         setSelectedClassId(profile.classId);
       } else if (cls.length > 0) {
+        myClassId = cls[0].id;
         setSelectedClassId(cls[0].id);
       }
 
-      const cl: ChecklistInfo[] = checklistsRes || [];
-      // 담당반 필터링
-      const filtered = profile.classId === 'ALL' ? cl : cl.filter(c => c.classId === profile.classId);
-      setChecklists(filtered);
+      // SQLite에서 체크리스트 메타 정보 로드
+      const metaRows = profile.classId === 'ALL'
+        ? await dbOperations.getAllChecklists()
+        : await dbOperations.getChecklistsByClass(myClassId);
+
+      // SQLite에서 체크 상태 로드
+      const allItems = await dbOperations.getAllChecklistItems();
       const state: Record<string, boolean> = {};
-      cl.forEach(c => { Object.assign(state, c.dataMap || {}); });
+      allItems.forEach(item => {
+        state[`${item.studentId}_${item.itemName}`] = item.isChecked === 1;
+      });
       setCheckState(state);
+
+      // ChecklistMeta → ChecklistInfo 변환
+      const cl: ChecklistInfo[] = metaRows.map(meta => ({
+        classId: meta.classId,
+        title: meta.title,
+        date: meta.date,
+        items: JSON.parse(meta.items) as string[],
+        dataMap: {},
+      }));
+      setChecklists(cl);
     } catch (e) {
-      Alert.alert('연결 오류', 'GAS 서버에 연결할 수 없습니다.\n인터넷 연결을 확인해 주세요.');
+      Alert.alert('오류', '데이터를 불러올 수 없습니다.');
     } finally {
       setLoading(false);
     }
@@ -78,12 +94,10 @@ export default function ChecklistScreen() {
     const newVal = !checkState[key];
     setCheckState(prev => ({ ...prev, [key]: newVal }));
     try {
-      await saveChecklistToGAS(cl.date + '|' + cl.classId, sId, item, newVal, cl.title);
+      await dbOperations.saveChecklistItem(cl.date, cl.classId, cl.title, sId, item, newVal);
     } catch (err) {
       console.warn("Checklist save error:", err);
-      // 저장 실패 시 상태 롤백
       setCheckState(prev => ({ ...prev, [key]: !newVal }));
-      Alert.alert('알림', '인터넷 연결이 불안정하여 체크 상태를 저장할 수 없습니다.');
     }
   };
 
@@ -93,28 +107,29 @@ export default function ChecklistScreen() {
     if (!newTitle.trim()) return Alert.alert('알림', '제목을 입력해 주세요.');
     if (items.length === 0) return Alert.alert('알림', '항목을 1개 이상 입력해 주세요.');
 
-    // 로컬 즉시 추가
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${(today.getMonth()+1).toString().padStart(2,'0')}-${today.getDate().toString().padStart(2,'0')}`;
     const newCl: ChecklistInfo = {
       classId: selectedClassId, title: newTitle.trim(),
       date: dateStr, items, dataMap: {},
     };
+
+    // SQLite에 즉시 저장
+    await dbOperations.createChecklist(dateStr, selectedClassId, newTitle.trim(), items);
+
     setChecklists(prev => [newCl, ...prev]);
     setShowCreateModal(false);
     setNewTitle(''); setNewItems(['', '', '']); setSelectedClassId('');
-    // GAS에는 첫 체크 시 자동 저장됨 (saveChecklistData 호출 시 생성)
   };
 
   const handleHide = (cl: ChecklistInfo) => {
-    Alert.alert('완료 처리', `"${cl.title}" 체크리스트를 완료 처리할까요?\n모든 교사 화면에서 사라집니다.`, [
+    Alert.alert('완료 처리', `"${cl.title}" 체크리스트를 완료 처리할까요?`, [
       { text: '취소', style: 'cancel' },
       {
         text: '완료', style: 'destructive', onPress: async () => {
-          const key = `${cl.date}|${cl.classId}|${cl.title}`;
           setChecklists(prev => prev.filter(c => !(c.date === cl.date && c.classId === cl.classId && c.title === cl.title)));
           if (activeChecklist?.title === cl.title) setActiveChecklist(null);
-          try { await hideChecklistFromGAS(key); } catch { /* ignore */ }
+          await dbOperations.hideChecklist(cl.date, cl.classId, cl.title);
         }
       }
     ]);
@@ -123,7 +138,7 @@ export default function ChecklistScreen() {
   if (loading) return (
     <View style={styles.center}>
       <ActivityIndicator color={COLORS.secondary} size="large" />
-      <Text style={styles.loadingText}>구글 스프레드시트 연결 중...</Text>
+      <Text style={styles.loadingText}>데이터 불러오는 중...</Text>
     </View>
   );
 
@@ -192,7 +207,7 @@ export default function ChecklistScreen() {
             />
           </View>
         </ScrollView>
-        <Text style={styles.footer}>* 터치 즉시 구글 스프레드시트에 저장됩니다</Text>
+        <Text style={styles.footer}>* 터치 즉시 저장됩니다</Text>
       </SafeAreaView>
     );
   }

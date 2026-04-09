@@ -7,7 +7,6 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { Provider as PaperProvider, MD3LightTheme as PaperDefaultTheme } from 'react-native-paper';
 import { initDatabase } from '../src/db/database';
-import { SyncEngine } from '../src/services/SyncEngine';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
@@ -37,9 +36,8 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded) {
-      // DB 초기화 및 동기화 시작
-      initDatabase().then(async () => {
-        await SyncEngine.runFullSync();
+      // DB 초기화
+      initDatabase().then(() => {
         SplashScreen.hideAsync();
       });
     }

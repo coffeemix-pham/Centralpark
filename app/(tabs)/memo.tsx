@@ -4,8 +4,9 @@ import {
   TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchStudentsFromGAS, saveMemoToGAS } from '../../src/api/gasApi';
+import { fetchStudentsFromGAS } from '../../src/api/gasApi';
 import { loadTeacherProfile } from '../../src/store/teacherStore';
+import { dbOperations } from '../../src/db/database';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
 
 interface Student { id: string; name: string; classId: string; gender?: string; memo?: string; }
@@ -25,10 +26,21 @@ export default function MemoScreen() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [res, profile] = await Promise.all([
-          fetchStudentsFromGAS(), loadTeacherProfile()
+        const [res, profile, allMemos] = await Promise.all([
+          fetchStudentsFromGAS(), loadTeacherProfile(), dbOperations.getAllMemos()
         ]);
-        setStudentData(res?.students || {});
+        // 로컬 메모를 studentData에 병합
+        const memoMap: Record<string, string> = {};
+        allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+
+        const students: Record<string, Student[]> = res?.students || {};
+        for (const classId in students) {
+          students[classId] = students[classId].map(s => ({
+            ...s,
+            memo: memoMap[s.id] ?? s.memo ?? '',
+          }));
+        }
+        setStudentData(students);
         const cls: ClassInfo[] = res?.classes || [];
         setClasses(cls);
         // 담당반 자동 선택
@@ -40,7 +52,7 @@ export default function MemoScreen() {
           setSelectedClass(cls[0]);
         }
       } catch {
-        Alert.alert('연결 오류', 'GAS 서버 연결에 실패했습니다.');
+        Alert.alert('연결 오류', '원아 정보를 불러올 수 없습니다.');
       } finally {
         setLoading(false);
       }
@@ -48,11 +60,12 @@ export default function MemoScreen() {
     init();
   }, []);
 
-  const handleSelectStudent = (student: Student) => {
+  const handleSelectStudent = async (student: Student) => {
     setSelected(student);
-    // GAS에서 받아온 메모 초기값 세팅
-    setMemoText(student.memo ?? '');
     setSavedAt(null);
+    // SQLite에서 메모 로드
+    const localMemo = await dbOperations.getMemo(student.id);
+    setMemoText(localMemo?.memoText ?? student.memo ?? '');
   };
 
   // 디바운스 자동 저장 (500ms)
@@ -66,7 +79,7 @@ export default function MemoScreen() {
     if (!selected) return;
     setSaving(true);
     try {
-      await saveMemoToGAS(selected.id, text);
+      await dbOperations.saveMemo(selected.id, text);
       const now = new Date();
       setSavedAt(`${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')} 저장됨`);
       // 로컬 캐시 업데이트
@@ -79,7 +92,6 @@ export default function MemoScreen() {
     } catch (err) {
       console.warn("Memo save error:", err);
       setSavedAt(`⚠️ 저장 실패`);
-      Alert.alert('알림', '인터넷 연결이 불안정하여 메모를 저장할 수 없습니다.\n잠시 후 다시 시도해 주세요.');
     } finally {
       setSaving(false);
     }
@@ -181,7 +193,7 @@ export default function MemoScreen() {
                 textAlignVertical="top"
               />
 
-              <Text style={styles.memoFooter}>💾 입력 후 0.5초 뒤 자동 저장 (오프라인 불가)</Text>
+              <Text style={styles.memoFooter}>💾 입력 후 0.5초 뒤 자동 저장</Text>
             </View>
           ) : (
             <View style={styles.emptyState}>
