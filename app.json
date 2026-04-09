@@ -2,7 +2,7 @@
   "expo": {
     "name": "센트럴파크 어플",
     "slug": "CentralparkExpo",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "centralparkexpo",
@@ -18,6 +18,7 @@
       "bundleIdentifier": "com.centralpark.daycare"
     },
     "android": {
+      "versionCode": 2,
       "package": "com.centralpark.daycare",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
