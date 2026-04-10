@@ -5,10 +5,12 @@ import {
   TextInput, Alert, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchStudentsFromGAS } from '../../src/api/gasApi';
 import { loadTeacherProfile } from '../../src/store/teacherStore';
 import { dbOperations } from '../../src/db/database';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
+import {
+  CACHE_KEY, readStudentsCache, subscribeCache, syncStudents,
+} from '../../src/services/DataSync';
 
 interface Student { id: string; name: string; classId: string; gender?: string; }
 interface ClassInfo { id: string; name: string; }
@@ -38,42 +40,37 @@ export default function ChecklistScreen() {
   // 현재 보고 있는 체크리스트
   const [activeChecklist, setActiveChecklist] = useState<ChecklistInfo | null>(null);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    let cancelled = false;
 
-  const loadAll = async () => {
-    setLoading(true);
-    try {
-      const [studentsRes, profile] = await Promise.all([
-        fetchStudentsFromGAS(), loadTeacherProfile()
-      ]);
-      setStudentData(studentsRes?.students || {});
-      const cls: ClassInfo[] = studentsRes?.classes || [];
-      setClasses(cls);
+    const applyStudents = (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null) => {
+      if (!res || cancelled) return;
+      setStudentData(res.students || {});
+      setClasses(res.classes || []);
+    };
 
-      // 담당반 자동 설정
+    // 체크리스트 메타 + 상태를 로드
+    const loadLocal = async () => {
+      const profile = await loadTeacherProfile();
       let myClassId = '';
       if (profile.classId !== 'ALL') {
         myClassId = profile.classId;
         setSelectedClassId(profile.classId);
-      } else if (cls.length > 0) {
-        myClassId = cls[0].id;
-        setSelectedClassId(cls[0].id);
       }
 
-      // SQLite에서 체크리스트 메타 정보 로드
       const metaRows = profile.classId === 'ALL'
         ? await dbOperations.getAllChecklists()
         : await dbOperations.getChecklistsByClass(myClassId);
 
-      // SQLite에서 체크 상태 로드
       const allItems = await dbOperations.getAllChecklistItems();
       const state: Record<string, boolean> = {};
       allItems.forEach(item => {
         state[`${item.studentId}_${item.itemName}`] = item.isChecked === 1;
       });
+
+      if (cancelled) return;
       setCheckState(state);
 
-      // ChecklistMeta → ChecklistInfo 변환
       const cl: ChecklistInfo[] = metaRows.map(meta => ({
         classId: meta.classId,
         title: meta.title,
@@ -82,12 +79,37 @@ export default function ChecklistScreen() {
         dataMap: {},
       }));
       setChecklists(cl);
-    } catch (e) {
-      Alert.alert('오류', '데이터를 불러올 수 없습니다.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    (async () => {
+      // 1) 캐시 즉시 표시
+      const cached = await readStudentsCache();
+      applyStudents(cached as any);
+      await loadLocal();
+      if (!cancelled) setLoading(false);
+      // 기본반 자동 선택 (ALL일 경우 첫 반)
+      setSelectedClassId(prev => {
+        if (prev) return prev;
+        const cls = (cached as any)?.classes || [];
+        return cls.length > 0 ? cls[0].id : '';
+      });
+      // 2) 백그라운드 동기화
+      syncStudents();
+    })();
+
+    // 3) 캐시 갱신 구독
+    const unsub = subscribeCache(CACHE_KEY.STUDENTS, async () => {
+      const latest = await readStudentsCache();
+      applyStudents(latest as any);
+    });
+
+    // 4) 최초 실행 대비 타임아웃
+    const timer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8000);
+
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
+  }, []);
 
   const handleToggle = async (cl: ChecklistInfo, sId: string, item: string) => {
     const key = `${sId}_${item}`;

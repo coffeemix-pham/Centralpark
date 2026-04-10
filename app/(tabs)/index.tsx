@@ -4,9 +4,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { BirthdayBanner } from '../../src/components/BirthdayBanner';
 import { WeatherWidget } from '../../src/components/WeatherWidget';
-import { fetchCalendarFromGAS } from '../../src/api/gasApi';
 import { getEmojiForEvent } from '../../src/utils/emojiMapper';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
+import {
+  CACHE_KEY, readCalendarCache, subscribeCache, syncCalendar,
+} from '../../src/services/DataSync';
 
 interface CalendarEvent {
   dateStr: string;  // "04/03(금)"
@@ -25,13 +27,34 @@ export default function DashboardScreen() {
   const [calLoading, setCalLoading] = useState(true);
 
   useEffect(() => {
-    fetchCalendarFromGAS()
-      .then((data) => {
-        // GAS는 { widget: [...], list: [...] } 형태로 반환
-        setEvents(data?.widget || []);
-      })
-      .catch(() => setEvents([]))
-      .finally(() => setCalLoading(false));
+    let cancelled = false;
+
+    // 1) 캐시를 즉시 표시
+    readCalendarCache().then((cached) => {
+      if (cancelled) return;
+      if (cached) {
+        setEvents(cached.widget || []);
+        setCalLoading(false);
+      }
+      // 2) 백그라운드로 최신 데이터 동기화
+      syncCalendar();
+    });
+
+    // 3) 캐시 갱신 이벤트 구독 — 새 데이터 도착 시 자동 갱신
+    const unsub = subscribeCache(CACHE_KEY.CALENDAR, async () => {
+      const latest = await readCalendarCache();
+      if (!cancelled && latest) {
+        setEvents(latest.widget || []);
+        setCalLoading(false);
+      }
+    });
+
+    // 4) 캐시가 비어 있는 최초 실행에 대비: 일정 시간 후 로딩 종료
+    const timer = setTimeout(() => {
+      if (!cancelled) setCalLoading(false);
+    }, 8000);
+
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, []);
 
   return (

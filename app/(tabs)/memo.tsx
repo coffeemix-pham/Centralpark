@@ -1,13 +1,15 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
+  TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchStudentsFromGAS } from '../../src/api/gasApi';
 import { loadTeacherProfile } from '../../src/store/teacherStore';
 import { dbOperations } from '../../src/db/database';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
+import {
+  CACHE_KEY, readStudentsCache, subscribeCache, syncStudents,
+} from '../../src/services/DataSync';
 
 interface Student { id: string; name: string; classId: string; gender?: string; memo?: string; }
 interface ClassInfo { id: string; name: string; }
@@ -24,40 +26,59 @@ export default function MemoScreen() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const [res, profile, allMemos] = await Promise.all([
-          fetchStudentsFromGAS(), loadTeacherProfile(), dbOperations.getAllMemos()
-        ]);
-        // 로컬 메모를 studentData에 병합
-        const memoMap: Record<string, string> = {};
-        allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+    let cancelled = false;
 
-        const students: Record<string, Student[]> = res?.students || {};
-        for (const classId in students) {
-          students[classId] = students[classId].map(s => ({
-            ...s,
-            memo: memoMap[s.id] ?? s.memo ?? '',
-          }));
-        }
-        setStudentData(students);
-        const cls: ClassInfo[] = res?.classes || [];
-        setClasses(cls);
-        // 담당반 자동 선택
+    // 캐시 + 메모를 결합하여 상태로 반영
+    const apply = async (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null) => {
+      if (!res || cancelled) return;
+      const [profile, allMemos] = await Promise.all([
+        loadTeacherProfile(), dbOperations.getAllMemos()
+      ]);
+      const memoMap: Record<string, string> = {};
+      allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+
+      const students: Record<string, Student[]> = {};
+      for (const classId in (res.students || {})) {
+        students[classId] = (res.students[classId] || []).map((s: any) => ({
+          ...s,
+          memo: memoMap[s.id] ?? s.memo ?? '',
+        }));
+      }
+      if (cancelled) return;
+      setStudentData(students);
+      const cls: ClassInfo[] = res.classes || [];
+      setClasses(cls);
+      // 담당반 자동 선택 (최초 1회만)
+      setSelectedClass(prev => {
+        if (prev) return prev;
         if (profile.classId !== 'ALL') {
           const myClass = cls.find(c => c.id === profile.classId);
-          if (myClass) setSelectedClass(myClass);
-          else if (cls.length > 0) setSelectedClass(cls[0]);
-        } else if (cls.length > 0) {
-          setSelectedClass(cls[0]);
+          if (myClass) return myClass;
         }
-      } catch {
-        Alert.alert('연결 오류', '원아 정보를 불러올 수 없습니다.');
-      } finally {
-        setLoading(false);
-      }
+        return cls.length > 0 ? cls[0] : null;
+      });
+      setLoading(false);
     };
-    init();
+
+    // 1) 캐시를 즉시 표시
+    readStudentsCache().then(async (cached) => {
+      await apply(cached as any);
+      // 2) 백그라운드 동기화
+      syncStudents();
+    });
+
+    // 3) 캐시 갱신 이벤트 구독
+    const unsub = subscribeCache(CACHE_KEY.STUDENTS, async () => {
+      const latest = await readStudentsCache();
+      await apply(latest as any);
+    });
+
+    // 4) 캐시가 없는 최초 실행 대비
+    const timer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8000);
+
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, []);
 
   const handleSelectStudent = async (student: Student) => {

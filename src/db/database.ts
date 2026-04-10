@@ -78,6 +78,11 @@ export const initDatabase = async () => {
       itemName TEXT NOT NULL,
       isChecked INTEGER DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS kv_cache (
+      key TEXT PRIMARY KEY NOT NULL,
+      value TEXT NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
   `);
 
   return db;
@@ -165,6 +170,27 @@ export const dbOperations = {
     await db.runAsync(
       'DELETE FROM checklists WHERE date = ? AND classId = ? AND title = ?',
       [date, classId, title]
+    );
+  },
+
+  // ─── 범용 캐시 (원아/캘린더 등 외부 데이터) ───
+  getCache: async <T = any>(key: string): Promise<{ value: T; updatedAt: number } | null> => {
+    const row = await db.getFirstAsync<{ value: string; updatedAt: number }>(
+      'SELECT value, updatedAt FROM kv_cache WHERE key = ?',
+      [key]
+    );
+    if (!row) return null;
+    try {
+      return { value: JSON.parse(row.value) as T, updatedAt: row.updatedAt };
+    } catch {
+      return null;
+    }
+  },
+
+  setCache: async (key: string, value: any) => {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO kv_cache (key, value, updatedAt) VALUES (?, ?, ?)',
+      [key, JSON.stringify(value), Date.now()]
     );
   },
 };

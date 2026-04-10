@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { fetchBirthdaysFromGAS } from '../api/gasApi';
+import {
+  CACHE_KEY, readStudentsCache, subscribeCache, deriveTodayBirthdays,
+} from '../services/DataSync';
 import { COLORS } from '../constants/theme';
 
 export const BirthdayBanner = () => {
@@ -8,10 +10,22 @@ export const BirthdayBanner = () => {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    fetchBirthdaysFromGAS()
-      .then(setNames)
-      .catch(() => setNames([]))
-      .finally(() => setLoaded(true));
+    let cancelled = false;
+
+    const apply = async () => {
+      const cached = await readStudentsCache();
+      if (cancelled) return;
+      setNames(deriveTodayBirthdays(cached));
+      setLoaded(true);
+    };
+
+    // 1) 캐시에서 즉시 파생
+    apply();
+
+    // 2) 캐시 갱신 구독 — syncStudents 완료 시 자동 업데이트
+    const unsub = subscribeCache(CACHE_KEY.STUDENTS, apply);
+
+    return () => { cancelled = true; unsub(); };
   }, []);
 
   if (!loaded) return (

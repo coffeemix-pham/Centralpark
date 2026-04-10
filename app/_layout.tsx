@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { Provider as PaperProvider, MD3LightTheme as PaperDefaultTheme } from 'react-native-paper';
 import { initDatabase } from '../src/db/database';
+import { kickoffBackgroundSync } from '../src/services/DataSync';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
@@ -36,9 +37,11 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded) {
-      // DB 초기화
+      // DB 초기화 → 스플래시 숨김 → 백그라운드 동기화 시작
       initDatabase().then(() => {
         SplashScreen.hideAsync();
+        // 스플래시 직후 백그라운드에서 GAS 동기화 시작 (UI 블록 X)
+        kickoffBackgroundSync();
       });
     }
   }, [loaded]);
