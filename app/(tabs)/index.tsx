@@ -11,7 +11,8 @@ import {
 } from '../../src/services/DataSync';
 
 interface CalendarEvent {
-  dateStr: string;  // "04/03(금)"
+  date: string;     // "2026-04-10" (GAS 원본)
+  dateStr: string;  // "04/10(금)" (정규화된 문자열)
   title: string;
 }
 
@@ -76,7 +77,7 @@ export default function DashboardScreen() {
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitleEmoji}>📅</Text>
-            <Text style={styles.cardTitle}>이번 주 주요 일정</Text>
+            <Text style={styles.cardTitle}>향후 7일간 주요 일정</Text>
           </View>
 
           {calLoading ? (

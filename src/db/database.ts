@@ -94,7 +94,8 @@ export const getDb = () => db;
 export const dbOperations = {
   // ─── 원아 관련 ───
   getStudentsByClass: async (classId: string): Promise<Student[]> => {
-    return await db.getAllAsync<Student>(
+    const database = db || await initDatabase();
+    return await database.getAllAsync<Student>(
       'SELECT * FROM students WHERE classId = ? AND status = "재원"',
       [classId]
     );
@@ -102,42 +103,48 @@ export const dbOperations = {
 
   // ─── 메모 관련 ───
   getMemo: async (studentId: string): Promise<Memo | null> => {
-    return await db.getFirstAsync<Memo>(
+    const database = db || await initDatabase();
+    return await database.getFirstAsync<Memo>(
       'SELECT * FROM memos WHERE studentId = ?',
       [studentId]
     );
   },
 
   saveMemo: async (studentId: string, memoText: string) => {
+    const database = db || await initDatabase();
     const now = Date.now();
-    await db.runAsync(
+    await database.runAsync(
       'INSERT OR REPLACE INTO memos (studentId, memoText, lastUpdated) VALUES (?, ?, ?)',
       [studentId, memoText, now]
     );
   },
 
   getAllMemos: async (): Promise<Memo[]> => {
-    return await db.getAllAsync<Memo>('SELECT * FROM memos WHERE memoText IS NOT NULL AND memoText != ""');
+    const database = db || await initDatabase();
+    return await database.getAllAsync<Memo>('SELECT * FROM memos WHERE memoText IS NOT NULL AND memoText != ""');
   },
 
   // ─── 체크리스트 관련 ───
   createChecklist: async (date: string, classId: string, title: string, items: string[]) => {
+    const database = db || await initDatabase();
     const id = `${date}|${classId}|${title}`;
-    await db.runAsync(
+    await database.runAsync(
       'INSERT OR REPLACE INTO checklist_meta (id, date, classId, title, items) VALUES (?, ?, ?, ?, ?)',
       [id, date, classId, title, JSON.stringify(items)]
     );
   },
 
   getChecklistsByClass: async (classId: string): Promise<ChecklistMeta[]> => {
-    return await db.getAllAsync<ChecklistMeta>(
+    const database = db || await initDatabase();
+    return await database.getAllAsync<ChecklistMeta>(
       'SELECT * FROM checklist_meta WHERE classId = ? ORDER BY date DESC',
       [classId]
     );
   },
 
   getAllChecklists: async (): Promise<ChecklistMeta[]> => {
-    return await db.getAllAsync<ChecklistMeta>(
+    const database = db || await initDatabase();
+    return await database.getAllAsync<ChecklistMeta>(
       'SELECT * FROM checklist_meta ORDER BY date DESC'
     );
   },
@@ -146,28 +153,32 @@ export const dbOperations = {
     date: string, classId: string, title: string,
     studentId: string, itemName: string, isChecked: boolean
   ) => {
+    const database = db || await initDatabase();
     const id = `${date}|${classId}|${title}|${studentId}|${itemName}`;
-    await db.runAsync(
+    await database.runAsync(
       'INSERT OR REPLACE INTO checklists (id, date, classId, title, studentId, itemName, isChecked) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [id, date, classId, title, studentId, itemName, isChecked ? 1 : 0]
     );
   },
 
   getChecklistItems: async (date: string, classId: string, title: string): Promise<ChecklistItem[]> => {
-    return await db.getAllAsync<ChecklistItem>(
+    const database = db || await initDatabase();
+    return await database.getAllAsync<ChecklistItem>(
       'SELECT * FROM checklists WHERE date = ? AND classId = ? AND title = ?',
       [date, classId, title]
     );
   },
 
   getAllChecklistItems: async (): Promise<ChecklistItem[]> => {
-    return await db.getAllAsync<ChecklistItem>('SELECT * FROM checklists');
+    const database = db || await initDatabase();
+    return await database.getAllAsync<ChecklistItem>('SELECT * FROM checklists');
   },
 
   hideChecklist: async (date: string, classId: string, title: string) => {
+    const database = db || await initDatabase();
     const metaId = `${date}|${classId}|${title}`;
-    await db.runAsync('DELETE FROM checklist_meta WHERE id = ?', [metaId]);
-    await db.runAsync(
+    await database.runAsync('DELETE FROM checklist_meta WHERE id = ?', [metaId]);
+    await database.runAsync(
       'DELETE FROM checklists WHERE date = ? AND classId = ? AND title = ?',
       [date, classId, title]
     );
@@ -175,22 +186,41 @@ export const dbOperations = {
 
   // ─── 범용 캐시 (원아/캘린더 등 외부 데이터) ───
   getCache: async <T = any>(key: string): Promise<{ value: T; updatedAt: number } | null> => {
-    const row = await db.getFirstAsync<{ value: string; updatedAt: number }>(
-      'SELECT value, updatedAt FROM kv_cache WHERE key = ?',
-      [key]
-    );
-    if (!row) return null;
+    const database = db || await initDatabase();
     try {
-      return { value: JSON.parse(row.value) as T, updatedAt: row.updatedAt };
-    } catch {
+      const row = await database.getFirstAsync<{ value: string; updatedAt: number }>(
+        'SELECT value, updatedAt FROM kv_cache WHERE key = ?',
+        [key]
+      );
+      
+      if (!row || !row.value) {
+        console.log(`[Cache Miss] ${key} 데이터가 없습니다.`);
+        return null;
+      }
+
+      // 안전한 파싱 시도
+      const parsedValue = JSON.parse(row.value) as T;
+      return { value: parsedValue, updatedAt: row.updatedAt };
+      
+    } catch (error) {
+      console.error(`[Cache Parse Error] ${key} 데이터 파싱 실패:`, error);
+      // 기존 캐시가 깨졌다면 차라리 삭제하여 다음 동기화 때 새로 받도록 유도
+      await database.runAsync('DELETE FROM kv_cache WHERE key = ?', [key]);
       return null;
     }
   },
 
   setCache: async (key: string, value: any) => {
-    await db.runAsync(
-      'INSERT OR REPLACE INTO kv_cache (key, value, updatedAt) VALUES (?, ?, ?)',
-      [key, JSON.stringify(value), Date.now()]
-    );
+    const database = db || await initDatabase();
+    try {
+      const stringifiedValue = JSON.stringify(value);
+      await database.runAsync(
+        'INSERT OR REPLACE INTO kv_cache (key, value, updatedAt) VALUES (?, ?, ?)',
+        [key, stringifiedValue, Date.now()]
+      );
+      console.log(`[Cache Set] ${key} 저장 완료`);
+    } catch (error) {
+      console.error(`[Cache Save Error] ${key} 저장 실패:`, error);
+    }
   },
 };

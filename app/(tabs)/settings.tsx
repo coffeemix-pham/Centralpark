@@ -8,6 +8,7 @@ import { fetchStudentsFromGAS } from '../../src/api/gasApi';
 import {
   saveTeacherProfile, loadTeacherProfile, TeacherProfile,
 } from '../../src/store/teacherStore';
+import { syncStudents, syncCalendar } from '../../src/services/DataSync';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
 
 interface ClassInfo { id: string; name: string; }
@@ -19,6 +20,7 @@ export default function SettingsScreen() {
     classId: 'ALL', className: '전체 반', teacherName: '',
   });
   const [saved, setSaved] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     // 저장된 프로필 불러오기
@@ -39,6 +41,18 @@ export default function SettingsScreen() {
 
   const selectClass = (classId: string, className: string) => {
     setProfile(prev => ({ ...prev, classId, className }));
+  };
+
+  const handleSyncData = async () => {
+    setSyncing(true);
+    try {
+      await Promise.all([syncStudents(), syncCalendar()]);
+      Alert.alert('✅ 동기화 완료', '최신 데이터를 성공적으로 가져왔습니다.');
+    } catch (err) {
+      Alert.alert('❌ 동기화 실패', '네트워크 연결을 확인해 주세요.');
+    } finally {
+      setSyncing(false);
+    }
   };
 
   return (
@@ -144,8 +158,30 @@ export default function SettingsScreen() {
           </View>
           <Text style={styles.infoText}>🌸 센트럴파크 어린이집 스마트 알림장</Text>
           <Text style={styles.infoText}>📱 버전 2.0.0</Text>
-          <Text style={styles.infoText}>☁️ 구글 캘린더 · 스프레드시트 연동</Text>
+          <Text style={styles.infoText}>Cloud Google Calendar · Spreadsheet Integration</Text>
           <Text style={styles.infoText}>🌤️ Open-Meteo 실시간 날씨 (환경부 기준)</Text>
+        </View>
+
+        {/* 데이터 동기화 관리 */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitleEmoji}>🔄</Text>
+            <Text style={styles.cardTitle}>데이터 관리</Text>
+          </View>
+          <Text style={styles.cardDesc}>
+            스프레드시트 정보를 즉시 업데이트하려면 아래 버튼을 눌러주세요.
+          </Text>
+          <TouchableOpacity
+            style={[styles.syncBtn, syncing && styles.syncBtnDisabled]}
+            onPress={handleSyncData}
+            disabled={syncing}
+          >
+            {syncing ? (
+              <ActivityIndicator color={COLORS.primary} />
+            ) : (
+              <Text style={styles.syncBtnText}>지금 동기화하기</Text>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={{ height: 20 }} />
@@ -233,4 +269,21 @@ const styles = StyleSheet.create({
   },
   saveBtnDone: { backgroundColor: COLORS.secondary },
   saveBtnText: { fontSize: 16, fontWeight: '800', color: COLORS.white },
+  // 동기화 버튼
+  syncBtn: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  syncBtnDisabled: {
+    borderColor: COLORS.border,
+  },
+  syncBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.primary,
+  },
 });

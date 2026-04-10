@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
@@ -25,55 +26,73 @@ export default function MemoScreen() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ─── 데이터 정제 및 정렬 (선생님 반 우선) ────────────────
+  const applyData = async (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null, profile: any) => {
+    if (!res) return;
+    const allMemos = await dbOperations.getAllMemos();
+    const memoMap: Record<string, string> = {};
+    allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+
+    const students: Record<string, Student[]> = {};
+    for (const classId in (res.students || {})) {
+      students[classId] = (res.students[classId] || []).map((s: any) => ({
+        ...s,
+        memo: memoMap[s.id] ?? s.memo ?? '',
+      }));
+    }
+    setStudentData(students);
+    
+    let cls: ClassInfo[] = res.classes || [];
+    if (profile && profile.classId !== 'ALL') {
+      const myClass = cls.find(c => c.id === profile.classId);
+      const others = cls.filter(c => c.id !== profile.classId);
+      cls = myClass ? [myClass, ...others] : cls;
+    }
+    setClasses(cls);
+
+    // 담당반 자동 선택 (최초 1회만 혹은 프로필 변경 시)
+    setSelectedClass(prev => {
+      if (prev && profile.classId !== 'ALL' && prev.id === profile.classId) return prev;
+      if (profile.classId !== 'ALL') {
+        const myClass = cls.find(c => c.id === profile.classId);
+        if (myClass) return myClass;
+      }
+      return prev ?? (cls.length > 0 ? cls[0] : null);
+    });
+    setLoading(false);
+  };
+
+  // ─── 포커스 시 프로필 및 반 설정 갱신 ────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const refresh = async () => {
+        const [prof, cached] = await Promise.all([
+          loadTeacherProfile(),
+          readStudentsCache()
+        ]);
+        if (!cancelled) {
+          await applyData(cached as any, prof);
+        }
+      };
+      refresh();
+      return () => { cancelled = true; };
+    }, [])
+  );
+
   useEffect(() => {
     let cancelled = false;
 
-    // 캐시 + 메모를 결합하여 상태로 반영
-    const apply = async (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null) => {
-      if (!res || cancelled) return;
-      const [profile, allMemos] = await Promise.all([
-        loadTeacherProfile(), dbOperations.getAllMemos()
-      ]);
-      const memoMap: Record<string, string> = {};
-      allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+    // 초기 실행 대비 (동기화 및 구독)
+    syncStudents();
 
-      const students: Record<string, Student[]> = {};
-      for (const classId in (res.students || {})) {
-        students[classId] = (res.students[classId] || []).map((s: any) => ({
-          ...s,
-          memo: memoMap[s.id] ?? s.memo ?? '',
-        }));
-      }
-      if (cancelled) return;
-      setStudentData(students);
-      const cls: ClassInfo[] = res.classes || [];
-      setClasses(cls);
-      // 담당반 자동 선택 (최초 1회만)
-      setSelectedClass(prev => {
-        if (prev) return prev;
-        if (profile.classId !== 'ALL') {
-          const myClass = cls.find(c => c.id === profile.classId);
-          if (myClass) return myClass;
-        }
-        return cls.length > 0 ? cls[0] : null;
-      });
-      setLoading(false);
-    };
-
-    // 1) 캐시를 즉시 표시
-    readStudentsCache().then(async (cached) => {
-      await apply(cached as any);
-      // 2) 백그라운드 동기화
-      syncStudents();
-    });
-
-    // 3) 캐시 갱신 이벤트 구독
+    // 캐시 갱신 이벤트 구독
     const unsub = subscribeCache(CACHE_KEY.STUDENTS, async () => {
       const latest = await readStudentsCache();
-      await apply(latest as any);
+      const prof = await loadTeacherProfile();
+      await applyData(latest as any, prof);
     });
 
-    // 4) 캐시가 없는 최초 실행 대비
     const timer = setTimeout(() => {
       if (!cancelled) setLoading(false);
     }, 8000);

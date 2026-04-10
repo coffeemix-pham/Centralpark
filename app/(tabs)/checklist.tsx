@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, ScrollView, StyleSheet, FlatList,
   TouchableOpacity, ActivityIndicator, Modal,
@@ -40,74 +41,89 @@ export default function ChecklistScreen() {
   // 현재 보고 있는 체크리스트
   const [activeChecklist, setActiveChecklist] = useState<ChecklistInfo | null>(null);
 
+  const [profile, setProfile] = useState<any>(null);
+
+  // ─── 데이터 정제 및 정렬 (선생님 반 우선) ────────────────
+  const applyStudents = (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null, currentProfile: any) => {
+    if (!res) return;
+    setStudentData(res.students || {});
+    
+    let cls = res.classes || [];
+    if (currentProfile && currentProfile.classId !== 'ALL') {
+      const myClass = cls.find(c => c.id === currentProfile.classId);
+      const others = cls.filter(c => c.id !== currentProfile.classId);
+      cls = myClass ? [myClass, ...others] : cls;
+      // 담당반 자동 선택 (필요 시)
+      setSelectedClassId(prev => prev || currentProfile.classId);
+    }
+    setClasses(cls);
+  };
+
+  // ─── 포커스 시 프로필 및 반 설정 갱신 ────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const refresh = async () => {
+        const [prof, cached] = await Promise.all([
+          loadTeacherProfile(),
+          readStudentsCache()
+        ]);
+        if (cancelled) return;
+
+        setProfile(prof);
+        if (prof.classId !== 'ALL') {
+          setSelectedClassId(prof.classId);
+        }
+        applyStudents(cached as any, prof);
+        
+        // 체크리스트 목록도 담당 반에 맞춰 다시 로드
+        const myClassId = prof.classId === 'ALL' ? '' : prof.classId;
+        const metaRows = prof.classId === 'ALL'
+          ? await dbOperations.getAllChecklists()
+          : await dbOperations.getChecklistsByClass(myClassId);
+        
+        if (!cancelled) {
+          setChecklists(metaRows.map(meta => ({
+            classId: meta.classId,
+            title: meta.title,
+            date: meta.date,
+            items: JSON.parse(meta.items) as string[],
+            dataMap: {},
+          })));
+        }
+      };
+
+      refresh();
+      return () => { cancelled = true; };
+    }, [])
+  );
+
   useEffect(() => {
     let cancelled = false;
 
-    const applyStudents = (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null) => {
-      if (!res || cancelled) return;
-      setStudentData(res.students || {});
-      setClasses(res.classes || []);
-    };
-
-    // 체크리스트 메타 + 상태를 로드
-    const loadLocal = async () => {
-      const profile = await loadTeacherProfile();
-      let myClassId = '';
-      if (profile.classId !== 'ALL') {
-        myClassId = profile.classId;
-        setSelectedClassId(profile.classId);
-      }
-
-      const metaRows = profile.classId === 'ALL'
-        ? await dbOperations.getAllChecklists()
-        : await dbOperations.getChecklistsByClass(myClassId);
-
+    // 초기 마운트 시 기본 데이터 로드
+    const init = async () => {
       const allItems = await dbOperations.getAllChecklistItems();
       const state: Record<string, boolean> = {};
       allItems.forEach(item => {
         state[`${item.studentId}_${item.itemName}`] = item.isChecked === 1;
       });
-
-      if (cancelled) return;
-      setCheckState(state);
-
-      const cl: ChecklistInfo[] = metaRows.map(meta => ({
-        classId: meta.classId,
-        title: meta.title,
-        date: meta.date,
-        items: JSON.parse(meta.items) as string[],
-        dataMap: {},
-      }));
-      setChecklists(cl);
-    };
-
-    (async () => {
-      // 1) 캐시 즉시 표시
-      const cached = await readStudentsCache();
-      applyStudents(cached as any);
-      await loadLocal();
-      if (!cancelled) setLoading(false);
-      // 기본반 자동 선택 (ALL일 경우 첫 반)
-      setSelectedClassId(prev => {
-        if (prev) return prev;
-        const cls = (cached as any)?.classes || [];
-        return cls.length > 0 ? cls[0].id : '';
-      });
-      // 2) 백그라운드 동기화
+      if (!cancelled) {
+        setCheckState(state);
+        setLoading(false);
+      }
       syncStudents();
-    })();
+    };
+    init();
 
-    // 3) 캐시 갱신 구독
+    // 캐시 갱신 구독 (백그라운드에서 데이터 바뀌면 UI 반영)
     const unsub = subscribeCache(CACHE_KEY.STUDENTS, async () => {
       const latest = await readStudentsCache();
-      applyStudents(latest as any);
+      const prof = await loadTeacherProfile();
+      applyStudents(latest as any, prof);
     });
 
-    // 4) 최초 실행 대비 타임아웃
-    const timer = setTimeout(() => {
-      if (!cancelled) setLoading(false);
-    }, 8000);
-
+    const timer = setTimeout(() => { if (!cancelled) setLoading(false); }, 8000);
     return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, []);
 
@@ -141,7 +157,9 @@ export default function ChecklistScreen() {
 
     setChecklists(prev => [newCl, ...prev]);
     setShowCreateModal(false);
-    setNewTitle(''); setNewItems(['', '', '']); setSelectedClassId('');
+    setNewTitle(''); 
+    setNewItems(['', '', '']);
+    // setSelectedClassId(''); // 💡 다시 생성할 때를 위해 담당 반 선택은 유지합니다.
   };
 
   const handleHide = (cl: ChecklistInfo) => {
