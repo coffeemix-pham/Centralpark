@@ -10,6 +10,10 @@ import {
 } from '../../src/store/teacherStore';
 import { syncStudents, syncCalendar } from '../../src/services/DataSync';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
+import {
+  saveKidsnoteCredentials, loadKidsnoteCredentials, clearKidsnoteCredentials,
+} from '../../src/store/credentialsStore';
+import { onTeacherClassChanged } from '../../src/services/medicationSync';
 
 interface ClassInfo { id: string; name: string; }
 
@@ -21,6 +25,11 @@ export default function SettingsScreen() {
   });
   const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // 키즈노트 계정
+  const [knId, setKnId] = useState('');
+  const [knPw, setKnPw] = useState('');
+  const [knSaved, setKnSaved] = useState(false);
+  const [knLoading, setKnLoading] = useState(true);
 
   useEffect(() => {
     // 저장된 프로필 불러오기
@@ -30,6 +39,13 @@ export default function SettingsScreen() {
       .then(res => setClasses(res?.classes || []))
       .catch(() => {})
       .finally(() => setLoading(false));
+    // 키즈노트 자격증명 불러오기
+    loadKidsnoteCredentials()
+      .then(creds => {
+        if (creds) { setKnId(creds.username); setKnSaved(true); }
+      })
+      .catch(() => {})
+      .finally(() => setKnLoading(false));
   }, []);
 
   const handleSave = async () => {
@@ -182,6 +198,92 @@ export default function SettingsScreen() {
               <Text style={styles.syncBtnText}>지금 동기화하기</Text>
             )}
           </TouchableOpacity>
+        </View>
+
+        {/* 키즈노트 계정 설정 */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitleEmoji}>🔑</Text>
+            <Text style={styles.cardTitle}>키즈노트 계정</Text>
+          </View>
+          <Text style={styles.cardDesc}>
+            투약의뢰서 자동 알림을 사용하려면 키즈노트 계정을 연동하세요.
+            계정 정보는 암호화되어 기기 내부에만 저장됩니다.
+          </Text>
+          {knLoading ? (
+            <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 16 }} />
+          ) : (
+            <>
+              <TextInput
+                style={[styles.input, { marginBottom: 10 }]}
+                placeholder="키즈노트 아이디 (이메일 또는 전화번호)"
+                value={knId}
+                onChangeText={setKnId}
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholderTextColor={COLORS.textMuted}
+              />
+              <TextInput
+                style={[styles.input, { marginBottom: 14 }]}
+                placeholder="비밀번호"
+                value={knPw}
+                onChangeText={setKnPw}
+                secureTextEntry
+                autoCapitalize="none"
+                placeholderTextColor={COLORS.textMuted}
+              />
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.syncBtn, { flex: 1, backgroundColor: COLORS.primary }]}
+                  onPress={async () => {
+                    if (!knId || !knPw) {
+                      Alert.alert('입력 오류', '아이디와 비밀번호를 모두 입력해 주세요.');
+                      return;
+                    }
+                    await saveKidsnoteCredentials(knId, knPw);
+                    setKnSaved(true);
+                    setKnPw('');
+                    // 담당 반 변경 시 네이티브도 업데이트
+                    try {
+                      await onTeacherClassChanged(profile.classId || '', profile.className || '');
+                    } catch (e) { /* 첫 연동 시 무시 */ }
+                    Alert.alert('✅ 저장 완료', '키즈노트 계정이 연동되었습니다.\n투약의뢰서가 자동으로 동기화됩니다.');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.syncBtnText, { color: COLORS.white }]}>
+                    {knSaved ? '계정 변경' : '계정 연동'}
+                  </Text>
+                </TouchableOpacity>
+                {knSaved && (
+                  <TouchableOpacity
+                    style={[styles.syncBtn, { borderColor: COLORS.danger }]}
+                    onPress={async () => {
+                      Alert.alert('계정 해제', '키즈노트 연동을 해제하시겠습니까?', [
+                        { text: '취소', style: 'cancel' },
+                        {
+                          text: '해제', style: 'destructive',
+                          onPress: async () => {
+                            await clearKidsnoteCredentials();
+                            setKnId(''); setKnPw(''); setKnSaved(false);
+                            Alert.alert('연동 해제 완료');
+                          },
+                        },
+                      ]);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.syncBtnText, { color: COLORS.danger }]}>해제</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {knSaved && (
+                <View style={[styles.selectedBadge, { marginTop: 12 }]}>
+                  <Text style={styles.selectedBadgeText}>🔗 연동 중: {knId}</Text>
+                </View>
+              )}
+            </>
+          )}
         </View>
 
         <View style={{ height: 20 }} />

@@ -2,7 +2,7 @@
   "expo": {
     "name": "센트럴파크 어플",
     "slug": "CentralparkExpo",
-    "version": "1.1.1",
+    "version": "2.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "centralparkexpo",
@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.centralpark.daycare"
     },
     "android": {
-      "versionCode": 3,
+      "versionCode": 4,
       "package": "com.centralpark.daycare",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
@@ -38,7 +38,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true

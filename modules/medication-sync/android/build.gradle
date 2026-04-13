@@ -1,0 +1,51 @@
+apply plugin: 'com.android.library'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+group = 'expo.modules.medicationsync'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.medicationsync'
+  compileSdk safeExtGet("compileSdkVersion", 36)
+
+  defaultConfig {
+    minSdkVersion safeExtGet('minSdkVersion', 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 36)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:${safeExtGet('kotlinVersion', '2.1.20')}"
+
+  // React Native (호스트 앱에서 제공 — 컴파일 시만 참조)
+  compileOnly("com.facebook.react:react-android")
+
+  // WorkManager (백그라운드 동기화)
+  implementation "androidx.work:work-runtime-ktx:2.9.1"
+
+  // EncryptedSharedPreferences (자격증명 안전 저장)
+  implementation "androidx.security:security-crypto:1.1.0-alpha06"
+
+  // OkHttp (GAS 호출)
+  implementation "com.squareup.okhttp3:okhttp:4.12.0"
+
+  // JSON
+  implementation "org.json:json:20231013"
+
+  // Core
+  implementation "androidx.core:core-ktx:1.13.1"
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

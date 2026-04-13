@@ -40,6 +40,11 @@ yarn-error.*
 /ios
 /android
 
+# [추가] 빌드 및 캐시 파일 제외
+**/build/
+**/.gradle/
+.kotlin/
+
 # APK & Binaries
 *.apk
 *.zip

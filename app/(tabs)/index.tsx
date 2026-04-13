@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -9,6 +9,9 @@ import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
 import {
   CACHE_KEY, readCalendarCache, subscribeCache, syncCalendar,
 } from '../../src/services/DataSync';
+import { useFocusEffect } from '@react-navigation/native';
+import { dbOperations } from '../../src/db/database';
+import { loadTeacherProfile } from '../../src/store/teacherStore';
 
 interface CalendarEvent {
   date: string;     // "2026-04-10" (GAS 원본)
@@ -26,6 +29,27 @@ export default function DashboardScreen() {
   const router = useRouter();
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [calLoading, setCalLoading] = useState(true);
+  const [medSummary, setMedSummary] = useState<{ total: number; pending: number; done: number; upcoming: { child_name: string; parsed_time: string }[] }>({
+    total: 0, pending: 0, done: 0, upcoming: []
+  });
+
+  // 투약 현황 데이터 로드 (반 필터링 연동)
+  const loadMedSummary = useCallback(async () => {
+    try {
+      const profile = await loadTeacherProfile();
+      const summary = await dbOperations.getTodayMedicationSummary(profile.className);
+      setMedSummary(summary);
+    } catch (e) {
+      console.warn('Medication summary load error:', e);
+    }
+  }, []);
+
+  // 화면이 포커스될 때마다 데이터 갱신
+  useFocusEffect(
+    useCallback(() => {
+      loadMedSummary();
+    }, [loadMedSummary])
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +121,50 @@ export default function DashboardScreen() {
           )}
         </View>
 
+        {/* ✨ [NEW] 오늘의 투약 현황 위젯 */}
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => router.push('/(tabs)/medication')}
+          activeOpacity={0.8}
+        >
+          <View style={styles.cardTitleRow}>
+            <Text style={styles.cardTitleEmoji}>💊</Text>
+            <Text style={[styles.cardTitle, { color: COLORS.primary }]}>오늘의 투약 현황</Text>
+            {medSummary.pending > 0 && <View style={styles.alertDot} />}
+          </View>
+
+          <View style={styles.medSummaryRow}>
+            <View style={styles.medSummaryBox}>
+              <Text style={styles.medSummaryLabel}>전체 의뢰</Text>
+              <Text style={styles.medSummaryValue}>{medSummary.total}건</Text>
+            </View>
+            <View style={styles.medSummaryDivider} />
+            <View style={styles.medSummaryBox}>
+              <Text style={styles.medSummaryLabel}>대기</Text>
+              <Text style={[styles.medSummaryValue, medSummary.pending > 0 && { color: COLORS.danger }]}>
+                {medSummary.pending}건
+              </Text>
+            </View>
+            <View style={styles.medSummaryDivider} />
+            <View style={styles.medSummaryBox}>
+              <Text style={styles.medSummaryLabel}>완료</Text>
+              <Text style={[styles.medSummaryValue, { color: COLORS.success }]}>{medSummary.done}건</Text>
+            </View>
+          </View>
+
+          {medSummary.pending > 0 && medSummary.upcoming.length > 0 && (
+            <View style={styles.upcomingMedList}>
+              <Text style={styles.upcomingMedTitle}>🔔 곧 투약이 필요해요</Text>
+              {medSummary.upcoming.map((u, i) => (
+                <View key={i} style={styles.upcomingMedRow}>
+                  <Text style={styles.upcomingMedName}>{u.child_name}</Text>
+                  <Text style={styles.upcomingMedTime}>{u.parsed_time}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </TouchableOpacity>
+
         {/* 퀵 메뉴 */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
@@ -163,4 +231,29 @@ const styles = StyleSheet.create({
   quickMenuBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, borderRadius: RADIUS.md },
   quickMenuIcon: { fontSize: 28, marginBottom: 6 },
   quickMenuLabel: { fontSize: 12, fontWeight: '700' },
+  // 투약 위젯 스타일
+  alertDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: COLORS.danger, marginLeft: 6,
+  },
+  medSummaryRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#F9F9F9', borderRadius: RADIUS.md,
+    paddingVertical: 12, marginBottom: 12,
+  },
+  medSummaryBox: { flex: 1, alignItems: 'center' },
+  medSummaryLabel: { fontSize: 11, color: COLORS.textLight, marginBottom: 2 },
+  medSummaryValue: { fontSize: 16, fontWeight: '800', color: COLORS.text },
+  medSummaryDivider: { width: 1, height: 20, backgroundColor: COLORS.border },
+  upcomingMedList: {
+    borderTopWidth: 1, borderTopColor: '#F0F0F0',
+    paddingTop: 10,
+  },
+  upcomingMedTitle: { fontSize: 12, fontWeight: '700', color: COLORS.textLight, marginBottom: 6 },
+  upcomingMedRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: 4, paddingHorizontal: 4,
+  },
+  upcomingMedName: { fontSize: 13, fontWeight: '600', color: COLORS.text },
+  upcomingMedTime: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
 });

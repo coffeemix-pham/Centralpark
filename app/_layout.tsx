@@ -7,6 +7,7 @@ import { Provider as PaperProvider, MD3LightTheme as PaperDefaultTheme } from 'r
 import { useState, useEffect } from 'react';
 import { initDatabase } from '../src/db/database';
 import { kickoffBackgroundSync } from '../src/services/DataSync';
+import { initializeMedicationSync } from '../src/services/medicationSync';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
@@ -44,6 +45,10 @@ export default function RootLayout() {
         SplashScreen.hideAsync();
         // 스플래시 직후 백그라운드에서 GAS 동기화 시작 (UI 블록 X)
         kickoffBackgroundSync();
+        // 투약의뢰서 동기화 초기화 (키워드 규칙 seed + 알람 재예약)
+        initializeMedicationSync().catch((e) =>
+          console.warn('MedicationSync init skipped:', e.message)
+        );
       }).catch((e) => {
         console.error('Database initialization failed:', e);
         // 에러가 나더라도 앱은 띄우도록 처리 (이미 로드된 데이터 사용 혹은 에러 대응)
