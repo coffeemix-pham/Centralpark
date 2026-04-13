@@ -43,7 +43,7 @@ export const WeatherWidget = () => {
     <View style={styles.card}>
       <View style={styles.titleRow}>
         <Text style={styles.titleEmoji}>📍</Text>
-        <Text style={styles.title}>청주 실시간 환경 정보</Text>
+        <Text style={styles.title}>오창 실시간 환경 정보</Text>
       </View>
 
       <View style={styles.grid}>

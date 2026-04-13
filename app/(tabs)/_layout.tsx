@@ -47,6 +47,14 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="medication"
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabIcon emoji="💊" label="투약" focused={focused} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="calendar"
         options={{
           tabBarIcon: ({ focused }) => (

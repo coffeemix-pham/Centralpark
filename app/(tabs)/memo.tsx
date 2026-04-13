@@ -1,12 +1,16 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Alert,
+  TextInput, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { fetchStudentsFromGAS, saveMemoToGAS } from '../../src/api/gasApi';
 import { loadTeacherProfile } from '../../src/store/teacherStore';
+import { dbOperations } from '../../src/db/database';
 import { COLORS, RADIUS, SHADOW } from '../../src/constants/theme';
+import {
+  CACHE_KEY, readStudentsCache, subscribeCache, syncStudents,
+} from '../../src/services/DataSync';
 
 interface Student { id: string; name: string; classId: string; gender?: string; memo?: string; }
 interface ClassInfo { id: string; name: string; }
@@ -22,37 +26,86 @@ export default function MemoScreen() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const [res, profile] = await Promise.all([
-          fetchStudentsFromGAS(), loadTeacherProfile()
-        ]);
-        setStudentData(res?.students || {});
-        const cls: ClassInfo[] = res?.classes || [];
-        setClasses(cls);
-        // 담당반 자동 선택
-        if (profile.classId !== 'ALL') {
-          const myClass = cls.find(c => c.id === profile.classId);
-          if (myClass) setSelectedClass(myClass);
-          else if (cls.length > 0) setSelectedClass(cls[0]);
-        } else if (cls.length > 0) {
-          setSelectedClass(cls[0]);
-        }
-      } catch {
-        Alert.alert('연결 오류', 'GAS 서버 연결에 실패했습니다.');
-      } finally {
-        setLoading(false);
+  // ─── 데이터 정제 및 정렬 (선생님 반 우선) ────────────────
+  const applyData = async (res: { students: Record<string, Student[]>; classes: ClassInfo[] } | null, profile: any) => {
+    if (!res) return;
+    const allMemos = await dbOperations.getAllMemos();
+    const memoMap: Record<string, string> = {};
+    allMemos.forEach(m => { memoMap[m.studentId] = m.memoText; });
+
+    const students: Record<string, Student[]> = {};
+    for (const classId in (res.students || {})) {
+      students[classId] = (res.students[classId] || []).map((s: any) => ({
+        ...s,
+        memo: memoMap[s.id] ?? s.memo ?? '',
+      }));
+    }
+    setStudentData(students);
+    
+    let cls: ClassInfo[] = res.classes || [];
+    if (profile && profile.classId !== 'ALL') {
+      const myClass = cls.find(c => c.id === profile.classId);
+      const others = cls.filter(c => c.id !== profile.classId);
+      cls = myClass ? [myClass, ...others] : cls;
+    }
+    setClasses(cls);
+
+    // 담당반 자동 선택 (최초 1회만 혹은 프로필 변경 시)
+    setSelectedClass(prev => {
+      if (prev && profile.classId !== 'ALL' && prev.id === profile.classId) return prev;
+      if (profile.classId !== 'ALL') {
+        const myClass = cls.find(c => c.id === profile.classId);
+        if (myClass) return myClass;
       }
-    };
-    init();
+      return prev ?? (cls.length > 0 ? cls[0] : null);
+    });
+    setLoading(false);
+  };
+
+  // ─── 포커스 시 프로필 및 반 설정 갱신 ────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const refresh = async () => {
+        const [prof, cached] = await Promise.all([
+          loadTeacherProfile(),
+          readStudentsCache()
+        ]);
+        if (!cancelled) {
+          await applyData(cached as any, prof);
+        }
+      };
+      refresh();
+      return () => { cancelled = true; };
+    }, [])
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // 초기 실행 대비 (동기화 및 구독)
+    syncStudents();
+
+    // 캐시 갱신 이벤트 구독
+    const unsub = subscribeCache(CACHE_KEY.STUDENTS, async () => {
+      const latest = await readStudentsCache();
+      const prof = await loadTeacherProfile();
+      await applyData(latest as any, prof);
+    });
+
+    const timer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8000);
+
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, []);
 
-  const handleSelectStudent = (student: Student) => {
+  const handleSelectStudent = async (student: Student) => {
     setSelected(student);
-    // GAS에서 받아온 메모 초기값 세팅
-    setMemoText(student.memo ?? '');
     setSavedAt(null);
+    // SQLite에서 메모 로드
+    const localMemo = await dbOperations.getMemo(student.id);
+    setMemoText(localMemo?.memoText ?? student.memo ?? '');
   };
 
   // 디바운스 자동 저장 (500ms)
@@ -66,7 +119,7 @@ export default function MemoScreen() {
     if (!selected) return;
     setSaving(true);
     try {
-      await saveMemoToGAS(selected.id, text);
+      await dbOperations.saveMemo(selected.id, text);
       const now = new Date();
       setSavedAt(`${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')} 저장됨`);
       // 로컬 캐시 업데이트
@@ -79,7 +132,6 @@ export default function MemoScreen() {
     } catch (err) {
       console.warn("Memo save error:", err);
       setSavedAt(`⚠️ 저장 실패`);
-      Alert.alert('알림', '인터넷 연결이 불안정하여 메모를 저장할 수 없습니다.\n잠시 후 다시 시도해 주세요.');
     } finally {
       setSaving(false);
     }
@@ -181,7 +233,7 @@ export default function MemoScreen() {
                 textAlignVertical="top"
               />
 
-              <Text style={styles.memoFooter}>💾 입력 후 0.5초 뒤 자동 저장 (오프라인 불가)</Text>
+              <Text style={styles.memoFooter}>💾 입력 후 0.5초 뒤 자동 저장</Text>
             </View>
           ) : (
             <View style={styles.emptyState}>

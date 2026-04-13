@@ -2,12 +2,12 @@
   "expo": {
     "name": "센트럴파크 어플",
     "slug": "CentralparkExpo",
-    "version": "1.0.0",
+    "version": "2.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "centralparkexpo",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/icon.png",
       "resizeMode": "contain",
@@ -18,12 +18,14 @@
       "bundleIdentifier": "com.centralpark.daycare"
     },
     "android": {
+      "versionCode": 4,
       "package": "com.centralpark.daycare",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
+        "INTERNET",
         "INTERNET"
       ],
       "edgeToEdgeEnabled": true,
@@ -36,7 +38,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true
@@ -47,6 +50,12 @@
         "projectId": "6f76ee26-ad5f-420c-abe1-3ad171a4f9ad"
       }
     },
-    "owner": "yusuin"
+    "owner": "yusuin",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/6f76ee26-ad5f-420c-abe1-3ad171a4f9ad"
+    }
   }
 }

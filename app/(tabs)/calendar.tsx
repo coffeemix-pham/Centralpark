@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import { Appbar, List, Text, Divider } from 'react-native-paper';
-import { fetchCalendarFromGAS } from '../../src/api/gasApi';
 import { getEmojiForEvent } from '../../src/utils/emojiMapper';
 import { COLORS, RADIUS } from '../../src/constants/theme';
+import {
+  CACHE_KEY, readCalendarCache, subscribeCache, syncCalendar,
+} from '../../src/services/DataSync';
 
 interface CalendarEvent {
   date: string;       // YYYY-MM-DD
@@ -20,20 +22,43 @@ export default function CalendarScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadCalendar();
+    let cancelled = false;
+
+    // 1) 캐시를 즉시 표시
+    readCalendarCache().then((cached) => {
+      if (cancelled) return;
+      if (cached) {
+        setEvents(cached.list || []);
+        setLoading(false);
+      }
+      // 2) 백그라운드에서 최신 데이터 동기화
+      syncCalendar();
+    });
+
+    // 3) 캐시 갱신 이벤트 구독
+    const unsub = subscribeCache(CACHE_KEY.CALENDAR, async () => {
+      const latest = await readCalendarCache();
+      if (!cancelled && latest) {
+        setEvents(latest.list || []);
+        setLoading(false);
+      }
+    });
+
+    // 4) 캐시가 없는 최초 실행 대비 타임아웃
+    const timer = setTimeout(() => {
+      if (!cancelled) setLoading(false);
+    }, 8000);
+
+    return () => { cancelled = true; unsub(); clearTimeout(timer); };
   }, []);
 
   const loadCalendar = async () => {
     setLoading(true);
-    try {
-      const data = await fetchCalendarFromGAS();
-      // GAS 응답: { widget: [...], list: [...] }
-      setEvents(data?.list || []);
-    } catch (error) {
-      console.error('Calendar Load Error:', error);
-    } finally {
-      setLoading(false);
+    const data = await syncCalendar();
+    if (data) {
+      setEvents(data.list || []);
     }
+    setLoading(false);
   };
 
   return (
